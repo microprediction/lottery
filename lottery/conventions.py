@@ -1,3 +1,4 @@
+from itertools import groupby
 
 NORMALIZATION_TOLERANCE = 1e-8
 NEG_INF_CUTOFF_TIME = -10000000000     # Avoid numpy dependency
@@ -39,3 +40,19 @@ def cutoff_time(previous_times:[int], t:int, k:int, tau:int):
             return NEG_INF_CUTOFF_TIME
     else:
         return NEG_INF_CUTOFF_TIME
+
+
+def consolidate_rewards(rewards:[(str, float)]) -> [(str,float)]:
+    """ By convention rewards are presented in alphabetical order with only one entry per owner """
+    rewards = sorted(rewards)
+    return [(owner, sum([r[1] for r in group]) ) for owner, group in groupby(rewards, lambda x: x[0])]
+
+
+
+
+
+if __name__=='__main__':
+    rewards = [('bill', -1.0), ('mary', -1.5), ('bill', 1.1363636363636362), ('mary', 1.3636363636363638)]
+    r = consolidate_rewards(rewards=rewards)
+    from pprint import pprint
+    pprint(r)

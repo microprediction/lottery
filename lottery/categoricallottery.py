@@ -1,5 +1,5 @@
 from typing import Union
-from lottery.conventions import ensure_normalized_weights, cutoff_time
+from lottery.conventions import ensure_normalized_weights, cutoff_time, consolidate_rewards
 
 
 class CategoricalLottery:
@@ -61,7 +61,7 @@ class CategoricalLottery:
             self.bets[horizon][v].append((t, owner, a))
         return 1
 
-    def calculate_rewards(self, k:int, t:int, tau:int, value: Union[int, str]):
+    def calculate_rewards(self, k:int, t:int, tau:int, value: Union[int, str], consolidate=False):
         """
             Calculates the hypothetical reward when a new categorical truth arrives
             at time t pertaining to the forecasting horizon (k,tau)
@@ -103,7 +103,8 @@ class CategoricalLottery:
             # (4) Winners split the pot
             winner_rewards = [ (o_,a_*total_money/total_winner_money) for (o_,a_) in winners ]
             participation_rewards = [ (o_,-a_) for (o_,a_) in all_totals ]
-            return participation_rewards + winner_rewards  # no real need to consolidate yet
+            net_rewards = participation_rewards + winner_rewards  # no real need to consolidate yet
+            return consolidate_rewards(net_rewards) if consolidate else net_rewards
 
     def append_to_history(self, value:Union[str,int], t:int, approx_max_len:int=10000):
         """ Add arriving data point to history, occasionally trimming
