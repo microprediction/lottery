@@ -1,7 +1,12 @@
 from typing import Union
+from lottery.conventions import ensure_normalized_weights, cutoff_time
 
 
-class SparseCategoricalLottery():
+class CategoricalLottery:
+
+    # Assumptions:
+    #    - There is no ordinal relationship between discrete outcomes
+    #    - There are many possible outcomes
 
     def __init__(self):
         self.bets = dict()          #  bets[horizon][value] holds (time,owner,amount) triples
@@ -10,14 +15,6 @@ class SparseCategoricalLottery():
         self.value_history = list() #  chronological observations of truths received
         self.time_history = list()  #  chronological times of truths received
         self.last_bet_time = dict()
-
-    @staticmethod
-    def ensure_normalized_weights(values, weights, tol=1e-6):
-        if weights is None:
-            weights = [1/len(values) for _ in values]
-        assert -tol<1-sum(weights)<tol
-        assert len(values)==len(weights)
-        return values, weights
 
     def register_forecast(self, k:int, t:int, tau:int, owner :str, values :[Union[str, int]], weights :[float] =None, amount=1.0)-> int:
         """  Update predictions for horizon (k,tau) from one supplier
@@ -31,7 +28,7 @@ class SparseCategoricalLottery():
         """
         assert k>=1, 'no prizes for predicting the previous value k>=1 please'
         assert (k>1) or (tau>0), 'maybe not a good choice for (k,tau)'
-        values, weights = self.ensure_normalized_weights(values=values, weights=weights)
+        values, weights = ensure_normalized_weights(values=values, weights=weights)
         horizon = (k, tau)
         if horizon not in self.last_bet_time:
              self.last_bet_time[horizon] = dict()
@@ -64,47 +61,32 @@ class SparseCategoricalLottery():
             self.bets[horizon][v].append((t, owner, a))
         return 1
 
-
-    @staticmethod
-    def cutoff_time(previous_times:[int], t:int, k:int, tau:int):
-        """ Convention for cutoff time when requesting a combination
-            of forecasting k steps ahead and tau seconds ahead
-
-        :param previous_times:  times at which ground truths have arrived
-        :param t:               current time - typically of an incoming observation
-        :param k:
-        :param tau:             in seconds
-        :return:
-        """
-        n = len(previous_times)
-        if k==1:
-            return t-tau
-        elif (k>1) and n>=k:
-            try:
-                return previous_times[-k]-tau
-            except IndexError:
-                return -100000000000
-        else:
-            return -100000000000000
-
     def calculate_rewards(self, k:int, t:int, tau:int, value: Union[int, str]):
         """
+            Calculates the hypothetical reward when a new categorical truth arrives
+            at time t pertaining to the forecasting horizon (k,tau)
+
         :param k:       Quarantine steps
         :param t:       Current rounded time in epoch seconds
         :param tau:     Quarantine time
         :param value:   Observed truth
-        :return:  rewards list [ (owner, calculate_rewards) ]
+        :return:  rewards list [ (owner, reward) ]
         """
-        horizon = (k, tau)
+        def _max_or_none_triple(l):
+            try:
+                return max(l)
+            except ValueError:
+                return (None, None, None)
 
-        t_cutoff = self.cutoff_time(previous_times=self.time_history,t=t,k=k,tau=tau)
-        # bet_totals[horizon][owner] holds  (time, amount ) triples
-        # bets[horizon][value] hold list of (time, owner, amount)
+        # (1) Find the last epoch second we accept forecasts from
+        horizon = (k, tau)
+        t_cutoff = cutoff_time(previous_times=self.time_history,t=t,k=k,tau=tau)
 
         if (t_cutoff>=t) or (horizon not in self.bets) or (value not in self.bets[horizon]):
-            return []
+            return []   # (2a) If there are no quarantined bets or nobody got it right, no rewards
+                        #      Carryover logic could potentially be applied here instead.
         else:
-            # Tabulate amounts bet on winning value
+            # (2b) Tabulate amounts bet on winning value in the most recent valid submissions for (k,tau)
             matching_correct_value = self.bets[horizon][value]
             matching_and_quarantined = [ (t_,o_,a_) for (t_,o_,a_) in matching_correct_value if (t_<= t_cutoff) ]
             quarantined_owners = list(set([ o_ for (t_,o_,a_) in matching_and_quarantined ]))
@@ -112,36 +94,42 @@ class SparseCategoricalLottery():
             winners = [ (o_,a_) for (t_,o_,a_) in matching_and_quarantined if (t_,o_) in latest_time_owner_pairs ]
             total_winner_money = sum( [a_ for (o_,a_) in winners ])
 
-            def _max_or_none_triple(l):
-                try:
-                    return max(l)
-                except ValueError:
-                    return (None,None,None)
-
+            # (3) Tabulate total amount invested in the most recent valid submissions for (k,tau)
             all_owners = list(self.bet_totals[horizon].keys())
             all_recent = [  _max_or_none_triple( [ (t_,o_,a_) for (t_,a_) in self.bet_totals[horizon][o_] if (t_<= t_cutoff) ] ) for o_ in all_owners ]
             all_totals = [ (o_,a_) for (t_,o_,a_) in all_recent if t_ is not None ]
             total_money = sum( [ a_ for (o_,a_) in all_totals ] )
+
+            # (4) Winners split the pot
             winner_rewards = [ (o_,a_*total_money/total_winner_money) for (o_,a_) in winners ]
             participation_rewards = [ (o_,-a_) for (o_,a_) in all_totals ]
-            rewards = participation_rewards + winner_rewards  # no real need to consolidate yet
-            return rewards
+            return participation_rewards + winner_rewards  # no real need to consolidate yet
 
-    def register_truth(self, value, t):
+    def append_to_history(self, value:Union[str,int], t:int, approx_max_len:int=10000):
+        """ Add arriving data point to history, occasionally trimming
+        :param value:  Observed truth
+        :param t:      Rounded epoch second
+        :return:
+        """
+        assert len(self.value_history)==len(self.time_history),'history out of sync'
         self.value_history.append(value)
         self.time_history.append(t)
+        if len(self.time_history) > 1.1*approx_max_len:
+            self.time_history = self.time_history[-approx_max_len:]
+            self.value_history = self.value_history[-approx_max_len:]
+        return len(self.time_history)
 
 
 
 if __name__=="__main__":
-    L = SparseCategoricalLottery()
+    L = CategoricalLottery()
     import random
     ys = [ random.choice([1,1,2,3]) for _ in range(10)]
     ts = [ i*100 for i in range(10)]
     tau = 10
     k = 2
     for t,y in zip(ts,ys):
-        L.register_truth(value=y, t=t)
+        L.append_to_history(value=y, t=t)
         rewards = L.calculate_rewards(k=k, t=t, tau=tau, value=y)
         print(rewards)
         L.register_forecast(t=t + 20, owner='bill', tau=tau, k=k, values=[y, y + 1, y + 1], weights=[0.5, 0.25, 0.25], amount=1.0)
