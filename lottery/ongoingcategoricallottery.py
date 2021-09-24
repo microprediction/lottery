@@ -1,26 +1,41 @@
 from typing import Union, List
-from lottery.conventions import ensure_normalized_weights, cutoff_time, consolidate_rewards, horizon_to_str
+from lottery.conventions import ensure_normalized_weights, cutoff_time, consolidate_rewards, k_and_tau_to_h, h_to_k_and_tau, ALLOWED_HORIZON_STYLES
 import json
 
 
-class TemporalCategoricalLottery(dict):
+class OngoingCategoricalLottery(dict):
 
-    def __init__(self, state = None, meta=None, allowed_values=None):
+    def __init__(self, state = None, meta=None,
+                 allowed_values:[str]=None,
+                 allowed_horizons:[str]=None,
+                 allowed_horizons_style:str=None):
         """   Implements rolling lotteries for various horizons
         :param meta:
-        :param state:         See below
-        :param meta_kwargs:   Alternative way to pass
+        :param state:                 See below
+        :param allowed_values:        Enumeration of outcomes (usually mutually exclusive)
+        :param allowed_horizons       Enumeration of horizons for which we agree to accept forecasts
+        :param allowed_horizons_style  Alternative way to specify a list of allowed horizons for common patterns
+                                          allowed_horizon_style='tote' uses k=1&tau=0
         """
 
-        # state:
-        #    [bets][horizon][value] holds (time,owner,amount) triples
-        #    [bet_totals][horizon][owner] holds (time,amount) triples
-        #    [forecasts][horizon][owner] holds (value,weight,amount) triples
+        # state includes ...
+        #    [bets][horizon][value] holds (time,owner,amount) lists
+        #    [bet_totals][horizon][owner] holds (time,amount) lists
+        #    [forecasts][horizon][owner] holds (value,weight,amount) lists
+        # We use lists rather than triples for JSON compat, despite lower performance
 
         # Shove optional arguments into meta
         meta = dict() if meta is None else meta
         if allowed_values is not None:
             meta['allowed_values'] = allowed_values
+        if allowed_horizons is not None:
+            meta['allowed_horizons'] = allowed_horizons
+        if allowed_horizons_style is not None:
+            meta['allowed_horizons'] = ALLOWED_HORIZON_STYLES[allowed_horizons_style]
+
+        if meta.get('allowed_horizons') is not None:
+            for h in meta['allowed_horizons']:
+                k, tau = h_to_k_and_tau(h) # Checks validity
 
         if state is None:
             state = dict(bets=dict(),
@@ -34,9 +49,15 @@ class TemporalCategoricalLottery(dict):
     @staticmethod
     def from_json(s:str):
         # Just use regular json.dumps() to serialize
-        return TemporalCategoricalLottery(**json.loads(s))
+        return OngoingCategoricalLottery(**json.loads(s))
 
-    def add(self, k:int, t:int, tau:int, owner :str, values :[str], weights :[float] =None, amount=1.0)-> int:
+    def implied_k_tau(self):
+        assert 'allowed_horizons' in self['meta'], ' Must specify k, tau'
+        assert len(self['meta']['allowed_horizons']) == 1, ' Must specify k, tau since horizon is ambiguous '
+        return h_to_k_and_tau(self.get('meta').get('allowed_horizons')[0])
+
+
+    def add(self, t:int, owner :str, values :[str], weights :[float] =None, amount=1.0, k:int=None, tau:int=None)-> int:
         """  Update predictions for horizon (k,tau) from one supplier
         :param t            Current time
         :param tau          Horizon in seconds
@@ -46,43 +67,50 @@ class TemporalCategoricalLottery(dict):
         :param weights:
         :return:  1 if successful, 0 otherwise
         """
-        assert k>=0, 'no prizes for predicting the previous value k>=1 please'
-        assert (k>0) or (tau>=0), 'maybe not a good choice for (k,tau)'
-        values, weights = ensure_normalized_weights(values=values, weights=weights)
-        horizon = horizon_to_str(k=k, tau=tau)
-        if horizon not in self['state']['last_bet_time']:
-             self['state']['last_bet_time'][horizon] = dict()
-        ignore =  (owner in self['state']['last_bet_time'][horizon]) and (t <= self['state']['last_bet_time'][horizon][owner])
-        if ignore:
-            return 0   # Not happy with out of order updates or more than one per second
-        self['state']['last_bet_time'][horizon][owner] = t
+        open_time = self['state']['time_history'][0]
+        if t < open_time:
+              return 0  # Too early
+        else:
+            if (k is None) or (tau is None):
+                k, tau = self.implied_k_tau()
 
-        # Update individual opinions
-        if horizon not in self['state']['forecasts']:
-            self['state']['forecasts'][horizon] = dict()
-        self['state']['forecasts'][horizon][owner] = {'money':sorted( [ [v,w*amount] for v,w in zip(values,weights)] ),
-                                                      'probability':sorted([[v,w] for v,w in zip(values,weights) ])
-                                                      }
+            assert k>=0, 'no prizes for predicting the previous value k>=1 please'
+            assert (k>0) or (tau>=0), 'maybe not a good choice for (k,tau)'
+            values, weights = ensure_normalized_weights(values=values, weights=weights)
+            horizon = k_and_tau_to_h(k=k, tau=tau)
+            if horizon not in self['state']['last_bet_time']:
+                 self['state']['last_bet_time'][horizon] = dict()
+            ignore =  (owner in self['state']['last_bet_time'][horizon]) and (t <= self['state']['last_bet_time'][horizon][owner])
+            if ignore:
+                return 0   # Not happy with out of order updates or more than one per second
+            self['state']['last_bet_time'][horizon][owner] = t
 
-        # Update amount invested by horizon
-        if horizon not in self['state']['bet_totals']:
-            self['state']['bet_totals'][horizon] = dict()
-        if owner not in self['state']['bet_totals'][horizon]:
-            self['state']['bet_totals'][horizon][owner] = list()
-        self['state']['bet_totals'][horizon][owner].append([t, amount])
+            # Update individual opinions
+            if horizon not in self['state']['forecasts']:
+                self['state']['forecasts'][horizon] = dict()
+            self['state']['forecasts'][horizon][owner] = {'money':sorted( [ [v,w*amount] for v,w in zip(values,weights)] ),
+                                                          'probability':sorted([[v,w] for v,w in zip(values,weights) ])
+                                                          }
 
-        # Update amount invested on individual outcomes
-        #   bets[horizon][value] holds a list of (time, owner, amount) triples
-        if horizon not in self['state']['bets']:
-            self['state']['bets'][horizon] = dict()
-        for v,w in zip(values,weights):
-            a = amount*w
-            if v not in self['state']['bets'][horizon]:
-                self['state']['bets'][horizon][v] = list()
-            self['state']['bets'][horizon][v].append([t, owner, a])
-        return 1
+            # Update amount invested by horizon
+            if horizon not in self['state']['bet_totals']:
+                self['state']['bet_totals'][horizon] = dict()
+            if owner not in self['state']['bet_totals'][horizon]:
+                self['state']['bet_totals'][horizon][owner] = list()
+            self['state']['bet_totals'][horizon][owner].append([t, amount])
 
-    def payout(self, k:int, t:int, tau:int, value: str, consolidate=False):
+            # Update amount invested on individual outcomes
+            #   bets[horizon][value] holds a list of (time, owner, amount) triples
+            if horizon not in self['state']['bets']:
+                self['state']['bets'][horizon] = dict()
+            for v,w in zip(values,weights):
+                a = amount*w
+                if v not in self['state']['bets'][horizon]:
+                    self['state']['bets'][horizon][v] = list()
+                self['state']['bets'][horizon][v].append([t, owner, a])
+            return 1
+
+    def payout(self,  t:int, value: str, consolidate=False, k:int=None, tau:int=None):
         """
             Calculates the hypothetical reward when a new categorical truth arrives
             at time t pertaining to the forecasting horizon (k,tau)
@@ -93,6 +121,9 @@ class TemporalCategoricalLottery(dict):
         :param value:   Observed truth
         :return:  rewards list [ (owner, reward) ]
         """
+        if (k is None) or (tau is None):
+            k, tau = self.implied_k_tau()
+
         def _max_or_none_triple(l):
             try:
                 return max(l)
@@ -100,7 +131,7 @@ class TemporalCategoricalLottery(dict):
                 return (None, None, None)
 
         # (1) Find the last epoch second we accept forecasts from
-        h = horizon_to_str(k=k, tau=tau)
+        h = k_and_tau_to_h(k=k, tau=tau)
         try:
             t_cutoff = cutoff_time(previous_times=self['state']['time_history'],t=t,k=k,tau=tau)
         except:
@@ -146,7 +177,7 @@ class TemporalCategoricalLottery(dict):
 
 
 if __name__=="__main__":
-    L = TemporalCategoricalLottery(allowed_values=list(range(12)))
+    L = OngoingCategoricalLottery(allowed_values=list(range(12)))
     import random
     ys = [ random.choice([1,1,2,3]) for _ in range(10)]
     ts = [ i*100 for i in range(10)]
@@ -163,7 +194,7 @@ if __name__=="__main__":
 
     # Serialize and de-serialize
     import json
-    G = TemporalCategoricalLottery(**json.loads(json.dumps(L)))
+    G = OngoingCategoricalLottery(**json.loads(json.dumps(L)))
     pass
 
 

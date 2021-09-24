@@ -3,18 +3,22 @@ from typing import Union
 
 NORMALIZATION_TOLERANCE = 1e-8
 NEG_INF_CUTOFF_TIME = -10000000000     # Avoid numpy dependency
-MAX_TAU = 1000*1000*100                # About 30 years
+MAX_TAU = 1000*1000*1000               # About 300 years
 
 
-def horizon_to_str(k:int, tau:int):
+def k_and_tau_to_h(k:int, tau:int):
     """ A convention for packing 2-tuple into something hashable and json'able """
     return 'k='+str(k)+'&tau='+str(tau)
 
 
-def horizon_from_str(h:str):
-   k = int(h.split('&')[0])
-   tau = int(h.split('&')[1])
-   return k, tau
+def h_to_k_and_tau(h:str):
+    k = int(h.split('&')[0].split('=')[1])
+    tau = int(h.split('&')[1].split('=')[1])
+    return k, tau
+
+TOTE_HORIZON = k_and_tau_to_h(k=1,tau=0)
+ALLOWED_HORIZON_STYLES = {'tote':[TOTE_HORIZON]}
+
 
 
 def ensure_normalized_weights(values, weights, tol=NORMALIZATION_TOLERANCE):

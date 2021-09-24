@@ -1,4 +1,4 @@
-from lottery.temporalcategorical import TemporalCategoricalLottery
+from lottery.ongoingcategoricallottery import OngoingCategoricalLottery
 from lottery.rewardutil import equal_rewards
 from lottery.conventions import consolidate_rewards
 from pprint import pprint
@@ -18,7 +18,7 @@ def test_categorical_deterministic_case_a():
                            [('bill', -1.0), ('mary', -1.5), ('bill', 1.1363636363636362), ('mary', 1.3636363636363638)],
                            [('bill', -1.0), ('mary', -1.5), ('mary', 2.5)]]
 
-    L = TemporalCategoricalLottery()
+    L = OngoingCategoricalLottery()
     #print(ys)
     ts = [i * 100 for i in range(10)]
     tau = 10
@@ -56,7 +56,7 @@ def test_categorical_deterministic_case_b():
                            [('bill', -1.0), ('mary', -1.5), ('bill', 1.3888888888888888), ('bill', 0.6944444444444444), ('mary', 0.41666666666666674)],
                            [('bill', -1.0), ('mary', -1.5), ('mary', 2.5)]]
 
-    L = TemporalCategoricalLottery()
+    L = OngoingCategoricalLottery()
     #print(ys)
     ts = [i * 100 for i in range(10)]
     tau = 10
@@ -95,7 +95,7 @@ def test_categorical_deterministic_case_b_serialization():
                            [('bill', -1.0), ('mary', -1.5), ('bill', 1.3888888888888888), ('bill', 0.6944444444444444), ('mary', 0.41666666666666674)],
                            [('bill', -1.0), ('mary', -1.5), ('mary', 2.5)]]
 
-    L = TemporalCategoricalLottery()
+    L = OngoingCategoricalLottery()
     #print(ys)
     ts = [i * 100 for i in range(10)]
     tau = 10
@@ -120,7 +120,7 @@ def test_categorical_deterministic_case_b_serialization():
         L.add( t=t + 21, owner='mary', tau=tau, k=k, values=['1', '2', '3', '4'], weights=[0.1, 0.1, 0.1, 0.7], amount=1.5)
 
         json_str = json.dumps(L)
-        G = TemporalCategoricalLottery.from_json(json_str)
+        G = OngoingCategoricalLottery.from_json(json_str)
 
         if G['state']!=L['state']:
             for k_,v_ in G['state'].items():
