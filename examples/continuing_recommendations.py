@@ -1,12 +1,13 @@
 from lottery.ongoingcategoricallottery import OngoingCategoricalLottery
-from lottery.conventions import ensure_normalized_dict_weights, horizon_str_to_k_and_tau, NEG_INF_CUTOFF_TIME
+from lottery.conventions import  horizon_str_to_k_and_tau
 from pprint import pprint
 
-# This example demonstrates a simple use of the lottery by an algorithm
-# that is seeking recommendations
-# We will imagine a live source of data is ticking and Bill and Mary are
-# providing a probabilistic assessment of which algorithm will perform best
-# five steps and one minute into the future
+# A micro-manager pattern:
+#
+#     - Get predictions of which algorithms will perform best
+#     - Select and run those algorithms, stacking as we go
+#     - See which actually performs, and reward
+
 
 def _predictions_inner(d1, d2):
     """

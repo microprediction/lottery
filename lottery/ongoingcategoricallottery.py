@@ -1,5 +1,6 @@
 from lottery.conventions import ensure_normalized_weights, cutoff_time, consolidate_rewards, k_and_tau_to_horizon_str,\
-    horizon_str_to_k_and_tau, ALLOWED_HORIZON_STYLES, NEG_INF_CUTOFF_TIME, ensure_normalized_dict_weights
+    horizon_str_to_k_and_tau, ALLOWED_HORIZON_STYLES, ensure_normalized_dict_weights
+import json
 
 # An ongoing categorical lottery is an object to which:
 #
