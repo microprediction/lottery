@@ -6,18 +6,26 @@ NEG_INF_CUTOFF_TIME = -10000000000     # Avoid numpy dependency
 MAX_TAU = 1000*1000*1000               # About 300 years
 
 
-def k_and_tau_to_h(k:int, tau:int):
-    """ A convention for packing 2-tuple into something hashable and json'able """
+def k_and_tau_to_horizon_str(k:int, tau:int):
+    """  (1,0)  -> k=1&tau=0 -> (1,0)
+       A convention for packing 2-tuple into something hashable and json'able
+    """
     return 'k='+str(k)+'&tau='+str(tau)
 
 
-def h_to_k_and_tau(h:str):
+def horizon_str_to_k_and_tau(h:str):
+    """  k=1&tau=0 -> (1,0) """
     k = int(h.split('&')[0].split('=')[1])
     tau = int(h.split('&')[1].split('=')[1])
     return k, tau
 
-TOTE_HORIZON = k_and_tau_to_h(k=1,tau=0)
-ALLOWED_HORIZON_STYLES = {'tote':[TOTE_HORIZON]}
+# Hardwire some common usage patterns
+ONCE_HORIZON = k_and_tau_to_horizon_str(k=1, tau=0)
+
+ALLOWED_HORIZON_STYLES = {
+          'once':[ONCE_HORIZON]    # One-off lottery, or horse race
+                          }
+
 
 
 
@@ -32,6 +40,13 @@ def ensure_normalized_weights(values, weights, tol=NORMALIZATION_TOLERANCE):
         assert sw>0,'weights sum to zero'
         weights = [ w/sw for w in weights ]
         return values, weights
+
+
+def ensure_normalized_dict_weights(d:dict,tol:float=NORMALIZATION_TOLERANCE) -> dict:
+    """  Normalize weights provided as dictionary """
+    new_vals, new_weights = ensure_normalized_weights(values=d.keys(), weights=d.values(),tol=tol)
+    return dict(zip(new_vals,new_weights))
+
 
 
 def cutoff_time(previous_times:[int], t:int, k:Union[int,str], tau:int):
@@ -81,6 +96,11 @@ def consolidate_rewards(rewards:[(str, float)]) -> [(str,float)]:
     return [(owner, sum([r[1] for r in group]) ) for owner, group in groupby(rewards, lambda x: x[0])]
 
 
+def equal_rewards(r1:[(str, float)], r2:[(str, float)])->bool:
+    """ True if two reward listings are equivalent """
+    c1 = consolidate_rewards(r1)
+    c2 = consolidate_rewards(r2)
+    return c1==c2
 
 
 if __name__=='__main__':

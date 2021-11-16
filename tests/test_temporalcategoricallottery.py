@@ -1,5 +1,5 @@
 from lottery.ongoingcategoricallottery import OngoingCategoricalLottery
-from lottery.rewardutil import equal_rewards
+from lottery.conventions import equal_rewards
 from lottery.conventions import consolidate_rewards
 from pprint import pprint
 import json

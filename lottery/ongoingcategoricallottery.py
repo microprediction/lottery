@@ -1,6 +1,15 @@
-from typing import Union, List
-from lottery.conventions import ensure_normalized_weights, cutoff_time, consolidate_rewards, k_and_tau_to_h, h_to_k_and_tau, ALLOWED_HORIZON_STYLES
-import json
+from lottery.conventions import ensure_normalized_weights, cutoff_time, consolidate_rewards, k_and_tau_to_horizon_str,\
+    horizon_str_to_k_and_tau, ALLOWED_HORIZON_STYLES, NEG_INF_CUTOFF_TIME, ensure_normalized_dict_weights
+
+# An ongoing categorical lottery is an object to which:
+#
+#      - Predictions can be added at any time with .add()
+#      - Observations of ground truths can be added at any time with .observe()
+#      - Hypothetical rewards can be computed, based on quarantine/horizon conventions,
+#        that would be paid if a ground truth were to arrive, with .payout()
+#
+# This object maintains the history of observations and breakdown of predictions currently pending, but
+# it does not serve as a bank to track rewards. The payout() is idempotent (pure).
 
 
 class OngoingCategoricalLottery(dict):
@@ -11,10 +20,10 @@ class OngoingCategoricalLottery(dict):
                  allowed_horizons_style:str=None):
         """   Implements rolling lotteries for various horizons
         :param meta:
-        :param state:                 See below
-        :param allowed_values:        Enumeration of outcomes (usually mutually exclusive)
-        :param allowed_horizons       Enumeration of horizons for which we agree to accept forecasts
-        :param allowed_horizons_style  Alternative way to specify a list of allowed horizons for common patterns
+        :param state:                     See below
+        :param allowed_values:            Enumeration of outcomes (usually mutually exclusive)
+        :param allowed_horizons           Enumeration of horizons for which we agree to accept forecasts
+        :param allowed_horizons_style     Alternative way to specify a list of allowed horizons for common patterns
                                           allowed_horizon_style='tote' uses k=1&tau=0
         """
 
@@ -35,7 +44,7 @@ class OngoingCategoricalLottery(dict):
 
         if meta.get('allowed_horizons') is not None:
             for h in meta['allowed_horizons']:
-                k, tau = h_to_k_and_tau(h) # Checks validity
+                k, tau = horizon_str_to_k_and_tau(h) # Checks validity
 
         if state is None:
             state = dict(bets=dict(),
@@ -54,14 +63,21 @@ class OngoingCategoricalLottery(dict):
     def implied_k_tau(self):
         assert 'allowed_horizons' in self['meta'], ' Must specify k, tau'
         assert len(self['meta']['allowed_horizons']) == 1, ' Must specify k, tau since horizon is ambiguous '
-        return h_to_k_and_tau(self.get('meta').get('allowed_horizons')[0])
+        return horizon_str_to_k_and_tau(self.get('meta').get('allowed_horizons')[0])
+
+    def all_added_values(self):
+        """ List of all values submitted anyone """
+        all_values = set()
+        for hz in self['state']['bets']:
+            for v in self['state']['bets'][hz].keys():
+                all_values.add(v)
+        return list(all_values)
 
 
     def add(self, t:int, owner :str, values :[str], weights :[float] =None, amount=1.0, k:int=None, tau:int=None)-> int:
         """  Update predictions for horizon (k,tau) from one supplier
         :param t            Current time
         :param tau          Horizon in seconds
-        :param epoch_time:  Time bet is placed
         :param owner:       Identifier
         :param values:      Names for possible outcomes (such as horse names)
         :param weights:
@@ -77,7 +93,7 @@ class OngoingCategoricalLottery(dict):
             assert k>=0, 'no prizes for predicting the previous value k>=1 please'
             assert (k>0) or (tau>=0), 'maybe not a good choice for (k,tau)'
             values, weights = ensure_normalized_weights(values=values, weights=weights)
-            horizon = k_and_tau_to_h(k=k, tau=tau)
+            horizon = k_and_tau_to_horizon_str(k=k, tau=tau)
             if horizon not in self['state']['last_bet_time']:
                  self['state']['last_bet_time'][horizon] = dict()
             ignore =  (owner in self['state']['last_bet_time'][horizon]) and (t <= self['state']['last_bet_time'][horizon][owner])
@@ -110,6 +126,18 @@ class OngoingCategoricalLottery(dict):
                 self['state']['bets'][horizon][v].append([t, owner, a])
             return 1
 
+
+    def set_k_tau_horizon_cutoff(self, t:int, k:int=None, tau:int=None):
+        if (k is None) or (tau is None):
+            k, tau = self.implied_k_tau()
+        h = k_and_tau_to_horizon_str(k=k, tau=tau)
+        try:
+            t_cutoff = cutoff_time(previous_times=self['state']['time_history'], t=t, k=k, tau=tau)
+        except:
+            t_cutoff = None
+        return k, tau, h, t_cutoff
+
+
     def payout(self,  t:int, value: str, consolidate=False, k:int=None, tau:int=None):
         """
             Calculates the hypothetical reward when a new categorical truth arrives
@@ -121,21 +149,13 @@ class OngoingCategoricalLottery(dict):
         :param value:   Observed truth
         :return:  rewards list [ (owner, reward) ]
         """
-        if (k is None) or (tau is None):
-            k, tau = self.implied_k_tau()
-
         def _max_or_none_triple(l):
             try:
                 return max(l)
             except ValueError:
                 return (None, None, None)
 
-        # (1) Find the last epoch second we accept forecasts from
-        h = k_and_tau_to_h(k=k, tau=tau)
-        try:
-            t_cutoff = cutoff_time(previous_times=self['state']['time_history'],t=t,k=k,tau=tau)
-        except:
-            pass
+        k, tau, h, t_cutoff = self.set_k_tau_horizon_cutoff(t=t, k=k,tau=tau)
 
         if (t_cutoff>=t) or (h not in self['state']['bets']) or (value not in self['state']['bets'][h]):
             return []   # (2a) If there are no quarantined bets or nobody got it right, no rewards
@@ -175,27 +195,28 @@ class OngoingCategoricalLottery(dict):
             self['state']['value_history'] = self['state']['value_history'][-approx_max_len:]
         return len(self['state']['time_history'])
 
+    def suggest(self, t:int=None, k:int=None, tau:int=None )->dict:
+        """
+            :param  t   -  Future time
 
-if __name__=="__main__":
-    L = OngoingCategoricalLottery(allowed_values=list(range(12)))
-    import random
-    ys = [ random.choice([1,1,2,3]) for _ in range(10)]
-    ts = [ i*100 for i in range(10)]
-    tau = 10
-    k = 2
-    for t,y in zip(ts,ys):
-        L.observe(value=y, t=t)
-        rewards = L.payout(k=k, t=t, tau=tau, value=y)
-        print(rewards)
-        L.add(t=t + 20, owner='bill', tau=tau, k=k, values=[y, y + 1, y + 1], weights=[0.5, 0.25, 0.25], amount=1.0)
-        L.add(t=t + 20, owner='mary', tau=tau, k=k, values=[1, 2, 3], weights=[0.4, 0.4, 0.2], amount=1.5)
+            Returns { suggestions: weights }
 
-    pass
+        """
+        _, _, h, t_cutoff = self.set_k_tau_horizon_cutoff(t=t, k=k, tau=tau)
+        suggestions = self.all_added_values()
+        peanut_gallery = self['state']['bets'][h]
+        suggestion_weights = dict([(nm, 0) for nm in suggestions])
+        for name in suggestions:
+            for n_, bts in peanut_gallery.items():
+                if name == n_:
+                    for bt in bts:
+                        if bt[0] > t_cutoff:
+                            suggestion_weights[name] += bt[2]
+        suggestion_weights = ensure_normalized_dict_weights(suggestion_weights)
+        return suggestion_weights
 
-    # Serialize and de-serialize
-    import json
-    G = OngoingCategoricalLottery(**json.loads(json.dumps(L)))
-    pass
+
+
 
 
 
