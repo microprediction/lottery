@@ -10,7 +10,7 @@ import json
 #        that would be paid if a ground truth were to arrive, with .payout()
 #
 # This object maintains the history of observations and breakdown of predictions currently pending, but
-# it does not serve as a bank to track rewards. The payout() is idempotent (pure).
+# it does not serve as a bank to track rewards. The payout() method is idempotent.
 
 
 class OngoingCategoricalLottery(dict):
@@ -58,7 +58,7 @@ class OngoingCategoricalLottery(dict):
 
     @staticmethod
     def from_json(s:str):
-        # Just use regular json.dumps() to serialize
+        # (for the other direction just use regular json.dumps() to serialize)
         return OngoingCategoricalLottery(**json.loads(s))
 
     def implied_k_tau(self):
