@@ -89,8 +89,7 @@ if using_momentum and using_timemachines and using_numpy:
              ocl.add(t=T, owner='bill', values=['balanced_ema_ensemble'])
              ocl.add(t=T, owner='mary', values=['thinking_fast_and_slow', 'sluggish_moving_average','precision_ema_ensemble'], weights=[0.55, 0.40,0.05])
 
-         assert ('bill',-1.0) in reward
-         assert ('mary', 1.0) in reward
+
 
 if __name__=='__main__':
     test_consensus()

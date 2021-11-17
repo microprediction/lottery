@@ -7,7 +7,7 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name="lottery",
-    version="0.0.2",
+    version="0.0.3",
     description="Lottery like mechanisms",
     long_description=README,
     long_description_content_type="text/markdown",
