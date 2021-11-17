@@ -1,2 +1,2 @@
 # lottery
-Package implementing various generalized lotteries
+Various continuous time lotteries with quarantined predictions
